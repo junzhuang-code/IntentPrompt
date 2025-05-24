@@ -1,0 +1,20 @@
+# The config file for the framework
+main:
+  data_name: advbench_behaviors # [advbench_behaviors, harmbench_behaviors, jailbreakbench_behaviors, jambench_behaviors]
+  paraphraser_name: gemini-1.5-flash-002
+  target_name: gpt-4o # [gpt-4o, o1, o3-mini, gemini-2.0-flash-001, deepseek-chat, deepseek-reasoner, claude-3-7-sonnet-20250219]
+  evaluator_name: gemini-1.5-flash-002
+  para_types: none # ['none', 'ass', 'msw', 'ces']
+  is_fuzzy: '' # ['', 'NO']
+  para_mode: fuzzy_struct  # ['revise', 'struct', 'fuzzy_struct']
+  inq_mode: spin # ['naive', 'ela', 'spin']
+  is_defense: false # [true, false]
+  max_tokens: 2048
+  temp: 0.8
+  top_p: 0.95
+  num_iter: 5
+  vertexai_proj_id: Input_your_VertexAI_Project_ID
+  vertexai_region: vertexai_region # e.g., us-central1
+  openai_key: Input_your_OpenAI_key
+  deepseek_key: Input_your_DeepSeek_key
+  anthropic_key: Input_your_Anthropic_key
