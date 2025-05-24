@@ -30,7 +30,8 @@ Intent detection, a core component of natural language understanding, has consid
 > **data**: contain four datasets. \
 > **src**: contain scripts. \
 	│── **main.py** # main scripts \
-	│── **utils.py** # util functions
+	│── **utils.py** # util functions \
+	│── **IntentPrompt_Demo.ipynb** # demo
 
 #### Run
 > Update the config file with your Vertex AI project ID and/or other LLMs' key. \
