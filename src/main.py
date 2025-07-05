@@ -14,7 +14,7 @@ import time
 import argparse
 import pandas as pd
 from utils import (
-    read_yaml_file, subsample_data, #check_mkdirs, 
+    read_yaml_file, subsample_data,
     get_prompts_paraphrase, get_prompts_inquiry, get_prompts_evaluation, IA,
     build_genai_model, generate_content, printf, compute_asr, compute_success_hscore_mean,
 )
@@ -23,11 +23,18 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data_name', type=str, default='advbench_behaviors',
                     choices=['advbench_behaviors', 'harmbench_behaviors', 'jailbreakbench_behaviors', 'jambench_behaviors'],
                     help='The name of dataset.')
-parser.add_argument('--paraphraser_name', type=str, default='gemini-1.5-flash-002', help='The name of the paraphrasing agent.')
+parser.add_argument('--paraphraser_name', type=str, default='gemini-1.5-flash-002',
+                    choices=['gemini-1.5-flash-002', 'qwen/qwen3-14b:free',' mistralai/mixtral-8x7b-instruct'],
+                    help='The name of the auxiliary agent.')
 parser.add_argument('--target_name', type=str, default='gpt-4o',
-                    choices=['gpt-4o', 'o1', 'o3-mini', 'gemini-2.0-flash-001', 'deepseek-chat', 'deepseek-reasoner', 'claude-3-7-sonnet-20250219'],
+                    choices=['gpt-4o', 'gpt-4o-mini-2024-07-18', 'o1', 'o1-mini', 'o3-mini',
+                             'gemini-2.0-flash-001', 'deepseek-chat', 'deepseek-reasoner',
+                             'claude-3-7-sonnet-20250219', 'claude-3-haiku-20240307',
+                             'qwen/qwen3-235b-a22b:free','meta-llama/llama-4-scout:free'],
                     help='The name of the victim model.')
-parser.add_argument('--evaluator_name', type=str, default='gemini-1.5-flash-002', help='The name of the monitoring agent.')
+parser.add_argument('--evaluator_name', type=str, default='gemini-1.5-flash-002',
+                    choices=['gemini-1.5-flash-002', 'gpt-4o-mini-2024-07-18', 'qwen/qwen3-32b:free'],
+                    help='The name of the monitoring agent.')
 parser.add_argument('--para_types', type=str, default='none', choices=['none', 'ass', 'msw', 'ces'], help='The type of paraphrasing used.')
 parser.add_argument('--is_fuzzy', type=str, default='', choices=['', 'NO'], help='Whether or not to obscure the intent.')
 parser.add_argument('--para_mode', type=str, default='fuzzy_struct', choices=['revise', 'struct', 'fuzzy_struct'], help='The mode of paraphrasing.')
@@ -42,6 +49,7 @@ parser.add_argument('--vertexai_region', type=str, default='', help='Vertex AI r
 parser.add_argument('--openai_key', type=str, default='', help='API key for OpenAI.')
 parser.add_argument('--deepseek_key', type=str, default='', help='API key for DeepSeek.')
 parser.add_argument('--anthropic_key', type=str, default='', help='API key for Anthropic.')
+parser.add_argument('--openrouter_key', type=str, default='', help='API key for OpenRouter.')
 parser.add_argument('--config_file', type=str, default='model', help='Optional YAML config file to override arguments.')
 args = parser.parse_known_args()[0]
 
@@ -67,6 +75,7 @@ if len(args.config_file) > 0:
     args.openai_key = main_config.get('openai_key', args.openai_key)
     args.deepseek_key = main_config.get('deepseek_key', args.deepseek_key)
     args.anthropic_key = main_config.get('anthropic_key', args.anthropic_key)
+    args.openrouter_key = main_config.get('openrouter_key', args.openrouter_key)
 
 # Initialize the hyper-parameters and configs
 para_dict = {'none': 'taking no specific strategy',
@@ -74,67 +83,72 @@ para_dict = {'none': 'taking no specific strategy',
              'msw': 'misspelling sensitive words',
              'ces': 'changing expression style',
             } # types of paraphrase
-pdict = {'inquires': 'NA',
+pdict = {'inquiries': 'NA',
          'para_strat': para_dict[args.para_types],
          'fuzzy': args.is_fuzzy,
          'para_inq_old': 'NA',
          'feedback': 'NA',
         } # prompts' arguments
 openai_models = ['gpt', 'o1', 'o3']
+openrouter_models = ['qwen', 'llama', 'mixtral']
 api_key_map = {model: args.openai_key for model in openai_models} | {
-    'deepseek': args.deepseek_key,
-    'claude': args.anthropic_key,
-} # map model to api key
-api_key = next((key for keyword, key in api_key_map.items() if keyword in args.target_name.lower()), 'NA')
+               model: args.openrouter_key for model in openrouter_models} | {
+                'deepseek': args.deepseek_key,
+                'claude': args.anthropic_key,
+              } # map model to api key                                                                             
+url_model_map = {"https://api.openai.com/v1": ['gpt', 'o1', 'o3'],
+                 "https://api.deepseek.com/v1": ['deepseek'],
+                 "https://openrouter.ai/api/v1": ['qwen', 'llama', 'mixtral'],
+                }              
 genai_config = {'max_tokens': args.max_tokens,
                 'temperature': args.temp,
                 'top_p': args.top_p,
                 }
 # Subsample instances (for debug)
 is_sampled = True
-num_sample = 3
+num_sample = 5
 #vertexai.init(project=vertexai_proj_id, location=vertexai_region)  # init() if necessary
 
-def intent_jailbreak(inquires_list: list, num_iter: int, verbose: bool) -> list:
+def intent_jailbreak(inquiries_list: list, num_iter: int, verbose: bool) -> list:
     """
     @topic: explore the vulnerability via intent manipulation for red-teaming purposes.
     @inputs:
-        inquires_list (list of string): a list of text inquires.
+        inquiries_list (list of strings): a list of text inquiries.
         num_iter (int): the number of iterations.
         verbose (bool): print out the log if verbose=True.
     @returns:
-        opt_para_inquires (list): a list of optimal paraphrased inquires for jailbreak.
-        asr_list (list): a list of attack success rate (ASR) for each inquiry.
-        hscore_list (list): a list of harmfulness score (hscore) for each inquiry.
+        opt_para_inquiries (list): a list of optimal paraphrased inquiries for jailbreak.
+        asr_list (list): a list of attack success rates (ASR) for each inquiry.
+        hscore_list (list): a list of harmfulness scores (hscore) for each inquiry.
         q4j_mean (float): the average number of queries used for a successful jailbreak.
     """
     # Initialize multi-agents for jailbreak.
-    paraphraser = build_genai_model(args.paraphraser_name, api_key) # paraphraser
-    target_model = build_genai_model(args.target_name, api_key) # target model
-    evaluator = build_genai_model(args.evaluator_name, api_key) # evaluator
+    paraphraser = build_genai_model(args.paraphraser_name, api_key_map, url_model_map) # auxiliary agent
+    target_model = build_genai_model(args.target_name, api_key_map, url_model_map) # victim model
+    evaluator = build_genai_model(args.evaluator_name, api_key_map, url_model_map) # monitoring agent
 
-    opt_para_inquires = ['' for _ in range(len(inquires_list))]
-    asr_list, hscore_list = ([0] * len(inquires_list) for _ in range(2))
+    opt_para_inquiries = ['' for _ in range(len(inquiries_list))]
+    asr_list, hscore_list = ([0] * len(inquiries_list) for _ in range(2))
     q4j_list = []
-    for i, inquiry in enumerate(inquires_list):
+    for i, inquiry in enumerate(inquiries_list):
         time.sleep(1)
         printf("-"*20, verbose)
         printf(f"Jailbreaking the {int(i+1)}-th inquiry: {inquiry}", verbose)
-        pdict['inquires'] = inquiry
+        pdict['inquiries'] = inquiry
         num_query4jailbreak = 1 # the number of queries used for a successful jailbreak.
         for n in range(num_iter):
             time.sleep(1)
             printf(f"Paraphrasing the inquiry in {int(n+1)}-th iteration.", verbose)
-            # paraphrase the malicious inquires.
+            # paraphrase the malicious inquiries.
             prompts_para = get_prompts_paraphrase(pdict, args.para_mode)  # update prompts for paraphrase
             try:
                 para_inq = generate_content(paraphraser, args.paraphraser_name, genai_config, prompts_para)
             except:
                 break # break if fail to paraphrase
-            printf(f"Paraphrased inquires: {para_inq}".strip(), verbose)
+            printf(f"Paraphrased inquiries: {para_inq}".strip(), verbose)
 
-            # generate response using the target model with paraphrased inquires.
-            prompts_inq = get_prompts_inquiry(para_inq, args.is_defense, IA, args.inq_mode)  # update prompts for inquires
+            # generate response using the target model with paraphrased inquiries.
+            prompts_inq = get_prompts_inquiry(para_inq, args.is_defense, IA, args.inq_mode)  # update prompts for inquiries
 
             resp = generate_content(target_model, args.target_name, genai_config, prompts_inq)
             printf(f"Response from the target model: {resp}".strip(), verbose)
@@ -155,7 +169,7 @@ def intent_jailbreak(inquires_list: list, num_iter: int, verbose: bool) -> list:
                 num_query4jailbreak += 1
             else: # break the current FOR loop if the jailbreak is successful.
                 printf(f"Successful jailbreak in {int(n+1)}-th iteration.", verbose)
-                opt_para_inquires[i] = para_inq.strip() if para_inq else ''  # store the optimal para_inquiry for the successful jailbreak.
+                opt_para_inquiries[i] = para_inq.strip() if para_inq else ''  # store the optimal para_inquiry for the successful jailbreak.
                 asr_list[i] = is_jailbroken
                 hscore_list[i] = hscore
                 q4j_list.append(num_query4jailbreak) # count the query when jailbreak is successful. (or use 'n+1').
@@ -163,19 +177,19 @@ def intent_jailbreak(inquires_list: list, num_iter: int, verbose: bool) -> list:
                 pdict['feedback'] = 'NA'
                 break
     q4j_mean = sum(q4j_list)/len(q4j_list) if q4j_list else 0
-    return opt_para_inquires, asr_list, hscore_list, q4j_mean
+    return opt_para_inquiries, asr_list, hscore_list, q4j_mean
 
 
 if __name__ == '__main__':
     # Load data
     infile_path = f'../data/{args.data_name}.csv'
     data_df = pd.read_csv(infile_path, header=None) # read as dataframe
-    data_los = data_df.astype(str).apply(lambda x: ' '.join(x), axis=1).tolist() # convert to list of string
+    data_los = data_df.astype(str).apply(lambda x: ' '.join(x), axis=1).tolist() # convert to a list of strings
     # Subsample instances (for debug)
-    inquires_list = subsample_data(data_los, is_sampled, num_sample, seed=42)
+    inquiries_list = subsample_data(data_los, is_sampled, num_sample, seed=42)
 
     # Perform Rad Teaming - explore the vulnerability via intent jailbreak
-    opt_para_inquires, asr_list, hscore_list, q4j_mean = intent_jailbreak(inquires_list, args.num_iter, verbose=True)
+    opt_para_inquiries, asr_list, hscore_list, q4j_mean = intent_jailbreak(inquiries_list, args.num_iter, verbose=True)
 
     # Evaluation
     asr = compute_asr(asr_list)
