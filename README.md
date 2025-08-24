@@ -2,7 +2,7 @@
 
 ### Accepted for EMNLP 2025 Findings
 
-### Authors: Jun Zhuang, Haibo Jin, Ye Zhang, Zhengjian Kang, Wenbin Zhang, Gaby Dagher, Haohan Wang
+### Authors: Jun Zhuang, Haibo Jin, Ye Zhang, Zhengjian Kang, Wenbin Zhang, Gaby G. Dagher, Haohan Wang
 
 ### Abstract:
 > <p align="justify">
