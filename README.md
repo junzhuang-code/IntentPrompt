@@ -1,5 +1,7 @@
 # Exploring the Vulnerability of the Content Moderation Guardrail in Large Language Models via Intent Manipulation
 
+### Accepted for EMNLP 2025 Findings
+
 ### Authors: Jun Zhuang, Haibo Jin, Ye Zhang, Zhengjian Kang, Wenbin Zhang, Gaby Dagher, Haohan Wang
 
 ### Abstract:
